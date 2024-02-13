@@ -22,8 +22,7 @@ const server = http.createServer(async (req, res) => {
       res.end();
       return;
     } catch (error) {
-      res.writeHead(400, { "Content-Type": "text/plain" });
-      res.write(error.message);
+      res.writeHead(error.code, { "Content-Type": "text/plain" });
       res.end();
       return;
     } finally {
@@ -54,7 +53,6 @@ const server = http.createServer(async (req, res) => {
 
       if (!rows.length) {
         res.writeHead(404, { "Content-Type": "text/plain" });
-        res.write("Cliente não encontrado");
         res.end();
         return;
       }
@@ -77,7 +75,6 @@ const server = http.createServer(async (req, res) => {
       return;
     } catch (error) {
       res.writeHead(400, { "Content-Type": "text/plain" });
-      res.write(error.message);
       res.end();
       return;
     } finally {
@@ -105,29 +102,34 @@ const insertTransacao = async (client, id, body) => {
     );
 
     if (!row) {
-      throw new Error("Cliente não encontrado");
+      return Promise.reject({ code: 404 });
     }
 
     const { valor: valorAtual, id: saldoId, limite } = row;
 
-    const valor =
+    const saldo =
       body.tipo === "d" ? valorAtual - body.valor : valorAtual + body.valor;
 
-    await client.query(
-      "INSERT INTO transacoes (cliente_id, descricao, valor, tipo) VALUES ($1, $2, $3, $4)",
-      [id, body.descricao, body.valor, body.tipo]
-    );
+    if (saldo < -1000) {
+      return Promise.reject({ code: 422 });
+    }
 
-    await client.query("UPDATE saldos SET valor = $1 WHERE id = $2", [
-      valor,
-      saldoId,
+    await Promise.all([
+      await client.query(
+        "INSERT INTO transacoes (cliente_id, descricao, valor, tipo) VALUES ($1, $2, $3, $4)",
+        [id, body.descricao, body.valor, body.tipo]
+      ),
+      await client.query("UPDATE saldos SET valor = $1 WHERE id = $2", [
+        saldo,
+        saldoId,
+      ]),
     ]);
 
     await client.query("COMMIT");
 
     return {
       limite,
-      saldo: valor,
+      saldo,
     };
   } catch (error) {
     await client.query("ROLLBACK");
