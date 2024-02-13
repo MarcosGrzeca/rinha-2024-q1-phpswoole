@@ -31,7 +31,60 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // If the request is not for '/balance', respond with a 404 Not Found
+  if (
+    req.method === "GET" &&
+    (match = req.url.match(/\/clientes\/(\d+)\/extrato/))
+  ) {
+    const client = await getClient();
+
+    try {
+      const [, id] = match;
+      const { rows } = await client.query(
+        `
+		SELECT s.valor as saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
+		FROM saldos s
+		JOIN clientes c ON c.id = s.cliente_id
+		JOIN transacoes t ON t.cliente_id = s.cliente_id
+		WHERE s.cliente_id = $1
+		ORDER BY t.id DESC
+		LIMIT 10
+	  `,
+        [id]
+      );
+
+      if (!rows.length) {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.write("Cliente não encontrado");
+        res.end();
+        return;
+      }
+
+      const saldo = {
+        total: rows[0].saldo,
+        limite: rows[0].limite,
+      };
+
+      const ultimas_transacoes = rows;
+
+      const response = {
+        saldo,
+        ultimas_transacoes,
+      };
+
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.write(JSON.stringify(response));
+      res.end();
+      return;
+    } catch (error) {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.write(error.message);
+      res.end();
+      return;
+    } finally {
+      client.release();
+    }
+  }
+
   res.writeHead(404, { "Content-Type": "text/plain" });
   res.write("404 Not Found");
   res.end();
