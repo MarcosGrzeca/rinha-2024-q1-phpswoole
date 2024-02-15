@@ -21,8 +21,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.55"
-          memory: "200MB"
+          cpus: "0.20"
+          memory: "100MB"
     restart: on-failure
 
   api02:
@@ -30,6 +30,11 @@ services:
     hostname: api02
     ports:
       - "3002:3000"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: "100MB"
   
   nginx:
     image: nginx:latest
@@ -43,7 +48,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.15"
+          cpus: "0.20"
           memory: "10MB"
 
   db:
@@ -62,8 +67,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: "140MB"
+          cpus: "0.90"
+          memory: "340MB"
 
 networks:
   default:

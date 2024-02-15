@@ -1,8 +1,25 @@
 const http = require("http");
 const { Pool } = require("pg");
 
+const MAX_RETRIES = 10;
+const RETRY_TIMEOUT_MS = 50;
+
 const server = http.createServer(async (req, res) => {
 	let match = null;
+
+	const logMsg = ["Request", req.method, req.url];
+	let body = null;
+	try {
+		if (req.method === "POST") {
+			body = await getBody(req);
+		}
+	} catch (error) {
+		logMsg.push("Error parsing body", error.message);
+	}
+
+	if (body) {
+		logMsg.push("Body", JSON.stringify(body, null, 2));
+	}
 
 	if (
 		req.method === "POST" &&
@@ -12,33 +29,49 @@ const server = http.createServer(async (req, res) => {
 
 		try {
 			const [, id] = match;
-			const body = await getBody(req);
+			if (!Number.isInteger(body.valor)) {
+				logMsg.push("Error", "Valor não é um número inteiro");
+				res.writeHead(400);
+				res.end();
+				return;
+			}
 			const response =
 				body.tipo === "c"
-					? await insertCredito(client, id, body)
+					? await retryFn(() => insertCredito(client, id, body), 3)
 					: await retryFn(() => insertDebito(client, id, body), 3);
 
 			res.writeHead(200, { "Content-Type": "application/json" });
 
-			res.write(JSON.stringify(response));
+			try {
+				res.write(JSON.stringify(response));
+			} catch (error) {
+				console.log({ responseVazio: true, error });
+			}
 
 			res.end();
 			return;
 		} catch (error) {
 			let code = parseInt(error.code);
+			if (error.code === "25P02") {
+				code = 504;
+			} else if (error.code === "40P01") {
+				code = 503;
+			}
+
 			if (Number.isNaN(code) || code < 400 || code > 499) {
-				console.log({ message: error.message, code: error.code });
 				code = 500;
 			}
+
+			logMsg.push("ErrorCode", error.code);
+			logMsg.push("Error", JSON.stringify(error, null, 2));
 			res.writeHead(code, { "Content-Type": "text/plain" });
 			res.end();
 			return;
 		} finally {
+			console.log(logMsg.join(":"));
 			client.release();
 		}
-	}
-
-	if (
+	} else if (
 		req.method === "GET" &&
 		(match = req.url.match(/\/clientes\/(\d+)\/extrato/))
 	) {
@@ -48,14 +81,14 @@ const server = http.createServer(async (req, res) => {
 			const [, id] = match;
 			const { rows } = await client.query(
 				`
-		SELECT s.valor as saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
-		FROM clientes c
-		LEFT JOIN saldos s ON c.id = s.cliente_id
-		LEFT JOIN transacoes t ON t.cliente_id = s.cliente_id
-		WHERE s.cliente_id = $1
-		ORDER BY t.id DESC
-		LIMIT 10
-	  `,
+				SELECT s.valor as saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
+				FROM clientes c
+				LEFT JOIN saldos s ON c.id = s.cliente_id
+				LEFT JOIN transacoes t ON t.cliente_id = s.cliente_id
+				WHERE s.cliente_id = $1
+				ORDER BY t.id DESC
+				LIMIT 10
+			`,
 				[id]
 			);
 
@@ -78,48 +111,59 @@ const server = http.createServer(async (req, res) => {
 			};
 
 			res.writeHead(200, { "Content-Type": "application/json" });
-			res.write(JSON.stringify(response));
+			try {
+				res.write(JSON.stringify(response));
+			} catch (error) {
+				console.log({ responseVazio: true, error });
+			}
 			res.end();
 			return;
 		} catch (error) {
-			res.writeHead(400, { "Content-Type": "text/plain" });
+			logMsg.push("ErrorCode", error.code);
+			logMsg.push("Error", JSON.stringify(error, null, 2));
+			res.writeHead(400);
 			res.end();
 			return;
 		} finally {
+			console.log(logMsg.join(":"));
 			client.release();
 		}
+	} else {
+		res.writeHead(404, { "Content-Type": "text/plain" });
+		res.write("404 Not Found");
+		res.end();
 	}
-
-	res.writeHead(404, { "Content-Type": "text/plain" });
-	res.write("404 Not Found");
-	res.end();
 });
 
 const retryFn = async (fn, retry = 0) => {
 	try {
-		return await fn();
+		return fn();
 	} catch (error) {
 		if ([404, 422].includes(error.code)) {
 			return Promise.reject(error);
 		}
 
-		if (retry > 3) {
+		if (retry > MAX_RETRIES) {
 			return Promise.reject(error);
 		}
+
+		const timeout = RETRY_TIMEOUT_MS * (retry + 1);
+		await sleep(timeout);
 		return retryFn(fn, retry + 1);
 	}
 };
 
+const sleep = async (ms) => {
+	return new Promise((resolve) => {
+		setTimeout(resolve, ms);
+	});
+};
+
 const insertCredito = async (client, id, body) => {
+	const cliente = await getCliente(client, id);
+
 	try {
-		const cliente = await client.query("SELECT * FROM clientes WHERE id = $1", [
-			id,
-		]);
-
-		if (!cliente.rows.length) {
-			return Promise.reject({ code: 404 });
-		}
-
+		await client.query("BEGIN");
 		const [, saldo] = await Promise.all([
 			await client.query(
 				"INSERT INTO transacoes (cliente_id, descricao, valor, tipo) VALUES ($1, $2, $3, $4)",
@@ -131,26 +175,34 @@ const insertCredito = async (client, id, body) => {
 			),
 		]);
 
+		await client.query("COMMIT");
+
 		const valorSaldo = saldo.rows[0].valor;
 
 		return {
-			limite: cliente.rows[0].limite,
+			limite: cliente.limite,
 			saldo: valorSaldo,
 		};
-	} catch (error) {}
+	} catch (error) {
+		await client.query("ROLLBACK");
+		return Promise.reject(error);
+	}
 };
 
 const insertDebito = async (client, id, body) => {
+	const cliente = await getCliente(client, id);
+
+	const limite = cliente.limite;
+
 	try {
 		await client.query("BEGIN");
 		const {
 			rows: [row],
 		} = await client.query(
-			`SELECT s.id, s.valor, c.limite
-	  	FROM saldos s
-		  JOIN clientes c ON c.id = s.cliente_id
-	  WHERE cliente_id = $1
-	  FOR UPDATE`,
+			`SELECT s.id, s.valor
+			  FROM saldos s
+			WHERE s.cliente_id = $1
+			     FOR UPDATE`,
 			[id]
 		);
 
@@ -158,7 +210,7 @@ const insertDebito = async (client, id, body) => {
 			return Promise.reject({ code: 404 });
 		}
 
-		const { valor: valorAtual, id: saldoId, limite } = row;
+		const { valor: valorAtual, id: saldoId } = row;
 
 		const saldo = valorAtual - body.valor;
 
@@ -189,6 +241,24 @@ const insertDebito = async (client, id, body) => {
 	}
 };
 
+const clientesCache = {};
+const getCliente = async (client, id) => {
+	if (clientesCache[id]) {
+		return clientesCache[id];
+	}
+
+	const { rows } = await client.query("SELECT * FROM clientes WHERE id = $1", [
+		id,
+	]);
+
+	if (!rows.length) {
+		return Promise.reject({ code: 404 });
+	}
+
+	clientesCache[id] = rows[0];
+	return clientesCache[id];
+};
+
 const getBody = (req) => {
 	return new Promise((resolve, reject) => {
 		let body = "";
@@ -212,6 +282,7 @@ const getClient = () => {
 
 const pool = new Pool({
 	host: "db",
+	// host: "172.28.0.1",
 	port: 5432,
 	user: "admin",
 	password: "123",
