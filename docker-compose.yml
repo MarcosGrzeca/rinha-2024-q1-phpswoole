@@ -23,6 +23,7 @@ services:
         limits:
           cpus: "0.55"
           memory: "200MB"
+    restart: on-failure
 
   api02:
     <<: *api
