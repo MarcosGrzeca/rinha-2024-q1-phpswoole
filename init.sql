@@ -1,7 +1,8 @@
 CREATE UNLOGGED TABLE clientes (
 	id SERIAL PRIMARY KEY,
 	nome VARCHAR(50) NOT NULL,
-	limite INTEGER NOT NULL
+	limite INTEGER NOT NULL,
+	saldo INTEGER DEFAULT 0
 );
 
 CREATE UNLOGGED TABLE transacoes (
@@ -15,26 +16,16 @@ CREATE UNLOGGED TABLE transacoes (
 		FOREIGN KEY (cliente_id) REFERENCES clientes(id)
 );
 
-CREATE UNLOGGED TABLE saldos (
-	id SERIAL PRIMARY KEY,
-	cliente_id INTEGER NOT NULL,
-	valor INTEGER NOT NULL,
-	CONSTRAINT fk_clientes_saldos_id
-		FOREIGN KEY (cliente_id) REFERENCES clientes(id)
-);
-
 DO $$
 BEGIN
-	INSERT INTO clientes (nome, limite)
+	INSERT INTO clientes (nome, limite, saldo)
 	VALUES
-		('o barato sai caro', 1000 * 100),
-		('zan corp ltda', 800 * 100),
-		('les cruders', 10000 * 100),
-		('padaria joia de cocaia', 100000 * 100),
-		('kid mais', 5000 * 100);
+		('o barato sai caro', 1000 * 100, 0),
+		('zan corp ltda', 800 * 100, 0),
+		('les cruders', 10000 * 100, 0),
+		('padaria joia de cocaia', 100000 * 100, 0),
+		('kid mais', 5000 * 100, 0);
 	
-	INSERT INTO saldos (cliente_id, valor)
-		SELECT id, 0 FROM clientes;
 END;
 $$;
 
@@ -55,38 +46,36 @@ BEGIN
 	PERFORM pg_advisory_xact_lock(cliente_id_tx);
 	SELECT 
 		c.limite,
-		COALESCE(s.valor, 0)
+		COALESCE(c.saldo, 0)
 	INTO
 		limite_atual,
 		saldo_atual
 	FROM clientes c
-		LEFT JOIN saldos s
-			ON c.id = s.cliente_id
 	WHERE c.id = cliente_id_tx;
 
 	IF saldo_atual - valor_tx >= limite_atual * -1 THEN
 		INSERT INTO transacoes
 			VALUES(DEFAULT, cliente_id_tx, valor_tx, 'd', descricao_tx, NOW());
 		
-		UPDATE saldos
-		SET valor = valor - valor_tx
-		WHERE cliente_id = cliente_id_tx;
+		UPDATE clientes
+		SET saldo = saldo - valor_tx
+		WHERE id = cliente_id_tx;
 
 		RETURN QUERY
 			SELECT
-				valor,
+				saldo,
 				FALSE,
 				'ok'::VARCHAR(20)
-			FROM saldos
-			WHERE cliente_id = cliente_id_tx;
+			FROM clientes
+			WHERE id = cliente_id_tx;
 	ELSE
 		RETURN QUERY
 			SELECT
-				valor,
+				saldo,
 				TRUE,
 				'saldo insuficente'::VARCHAR(20)
-			FROM saldos
-			WHERE cliente_id = cliente_id_tx;
+			FROM clientes
+			WHERE id = cliente_id_tx;
 	END IF;
 END;
 $$;
@@ -108,9 +97,9 @@ BEGIN
 		VALUES(DEFAULT, cliente_id_tx, valor_tx, 'c', descricao_tx, NOW());
 
 	RETURN QUERY
-		UPDATE saldos
-		SET valor = valor + valor_tx
-		WHERE cliente_id = cliente_id_tx
-		RETURNING valor, FALSE, 'ok'::VARCHAR(20);
+		UPDATE clientes
+		SET saldo = saldo + valor_tx
+		WHERE id = cliente_id_tx
+		RETURNING saldo, FALSE, 'ok'::VARCHAR(20);
 END;
 $$;

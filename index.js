@@ -76,19 +76,17 @@ const server = http.createServer(async (req, res) => {
 		(match = req.url.match(/\/clientes\/(\d+)\/extrato/))
 	) {
 		const client = await getClient();
+		const [, id] = match;
 
 		try {
-			const [, id] = match;
+			const cliente = await getCliente(client, id);
 			const { rows } = await client.query(
-				`
-				SELECT s.valor as saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
+				`SELECT c.saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
 				FROM clientes c
-				LEFT JOIN saldos s ON c.id = s.cliente_id
-				LEFT JOIN transacoes t ON t.cliente_id = s.cliente_id
-				WHERE s.cliente_id = $1
+				LEFT JOIN transacoes t ON t.cliente_id = c.id
+				WHERE c.id = $1
 				ORDER BY t.id DESC
-				LIMIT 10
-			`,
+				LIMIT 10`,
 				[id]
 			);
 
@@ -103,7 +101,7 @@ const server = http.createServer(async (req, res) => {
 				limite: rows[0].limite,
 			};
 
-			const ultimas_transacoes = rows.filter((r) => !!r.realizada_em);
+			const ultimas_transacoes = !rows?.[0]?.realizada_em ? [] : rows;
 
 			const response = {
 				saldo,
@@ -121,7 +119,7 @@ const server = http.createServer(async (req, res) => {
 		} catch (error) {
 			logMsg.push("ErrorCode", error.code);
 			logMsg.push("Error", JSON.stringify(error, null, 2));
-			res.writeHead(400);
+			res.writeHead(error.code === 404 ? 404 : 500);
 			res.end();
 			return;
 		} finally {
@@ -163,28 +161,28 @@ const insertCredito = async (client, id, body) => {
 	const cliente = await getCliente(client, id);
 
 	try {
-		await client.query("BEGIN");
-		const [, saldo] = await Promise.all([
-			await client.query(
-				"INSERT INTO transacoes (cliente_id, descricao, valor, tipo) VALUES ($1, $2, $3, $4)",
-				[id, body.descricao, body.valor, "c"]
-			),
-			await client.query(
-				"UPDATE saldos SET valor = valor + $1 WHERE cliente_id = $2 RETURNING *",
-				[body.valor, id]
-			),
+		const {
+			rows: [row],
+		} = await client.query(`SELECT creditar($1, $2, $3) as result`, [
+			id,
+			body.valor,
+			body?.descricao ?? "",
 		]);
 
-		await client.query("COMMIT");
+		if (!row || typeof row?.result !== "string") {
+			return Promise.reject({ code: 400 });
+		}
 
-		const valorSaldo = saldo.rows[0].valor;
+		const [novo_saldo, possui_erro, mensagem] = row.result
+			.replace("(", "")
+			.replace(")", "")
+			.split(",");
 
 		return {
 			limite: cliente.limite,
-			saldo: valorSaldo,
+			saldo: parseInt(novo_saldo),
 		};
 	} catch (error) {
-		await client.query("ROLLBACK");
 		return Promise.reject(error);
 	}
 };
@@ -195,48 +193,32 @@ const insertDebito = async (client, id, body) => {
 	const limite = cliente.limite;
 
 	try {
-		await client.query("BEGIN");
 		const {
 			rows: [row],
-		} = await client.query(
-			`SELECT s.id, s.valor
-			  FROM saldos s
-			WHERE s.cliente_id = $1
-			     FOR UPDATE`,
-			[id]
-		);
+		} = await client.query(`SELECT debitar($1, $2, $3) as result`, [
+			id,
+			body.valor,
+			body?.descricao ?? "",
+		]);
 
-		if (!row) {
-			return Promise.reject({ code: 404 });
+		if (!row || typeof row?.result !== "string") {
+			return Promise.reject({ code: 400 });
 		}
 
-		const { valor: valorAtual, id: saldoId } = row;
+		const [novo_saldo, possui_erro, mensagem] = row.result
+			.replace("(", "")
+			.replace(")", "")
+			.split(",");
 
-		const saldo = valorAtual - body.valor;
-
-		if (saldo < -1000) {
+		if (possui_erro === "t") {
 			return Promise.reject({ code: 422 });
 		}
 
-		await Promise.all([
-			await client.query(
-				"INSERT INTO transacoes (cliente_id, descricao, valor, tipo) VALUES ($1, $2, $3, $4)",
-				[id, body.descricao, body.valor, "d"]
-			),
-			await client.query("UPDATE saldos SET valor = $1 WHERE id = $2", [
-				saldo,
-				saldoId,
-			]),
-		]);
-
-		await client.query("COMMIT");
-
 		return {
 			limite,
-			saldo,
+			saldo: parseInt(novo_saldo),
 		};
 	} catch (error) {
-		await client.query("ROLLBACK");
 		return Promise.reject(error);
 	}
 };
@@ -281,8 +263,8 @@ const getClient = () => {
 };
 
 const pool = new Pool({
-	host: "db",
-	// host: "172.28.0.1",
+	// host: "db",
+	host: "172.28.0.1",
 	port: 5432,
 	user: "admin",
 	password: "123",
