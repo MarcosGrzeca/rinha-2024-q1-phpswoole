@@ -7,7 +7,13 @@ const RETRY_TIMEOUT_MS = 50;
 const server = http.createServer(async (req, res) => {
 	let match = null;
 
-	const logMsg = ["Request", req.method, req.url];
+	res.on("close", () => {
+		if (res.statusCode === 500) {
+			console.log(logMsg.join(":"));
+		}
+	});
+
+	const logMsg = [req.method, req.url];
 	let body = null;
 	try {
 		if (req.method === "POST") {
@@ -18,7 +24,7 @@ const server = http.createServer(async (req, res) => {
 	}
 
 	if (body) {
-		logMsg.push("Body", JSON.stringify(body, null, 2));
+		logMsg.push("Body", JSON.stringify(body));
 	}
 
 	if (
@@ -29,9 +35,9 @@ const server = http.createServer(async (req, res) => {
 
 		try {
 			const [, id] = match;
-			if (!Number.isInteger(body.valor)) {
-				logMsg.push("Error", "Valor não é um número inteiro");
-				res.writeHead(400);
+			if (!validarTransacao(body)) {
+				logMsg.push("Error", "Transacao inválida");
+				res.writeHead(422);
 				res.end();
 				return;
 			}
@@ -68,7 +74,6 @@ const server = http.createServer(async (req, res) => {
 			res.end();
 			return;
 		} finally {
-			console.log(logMsg.join(":"));
 			client.release();
 		}
 	} else if (
@@ -123,7 +128,6 @@ const server = http.createServer(async (req, res) => {
 			res.end();
 			return;
 		} finally {
-			console.log(logMsg.join(":"));
 			client.release();
 		}
 	} else {
@@ -132,6 +136,27 @@ const server = http.createServer(async (req, res) => {
 		res.end();
 	}
 });
+
+const validarTransacao = (body) => {
+	if (!Number.isInteger(body.valor)) {
+		return false;
+	}
+
+	if (!["c", "d"].includes(body.tipo)) {
+		return false;
+	}
+
+	if (!body.descricao) {
+		return false;
+	}
+
+	const descricao = body.descricao.replace(/[^a-zA-Z0-9]/g, "");
+	if (descricao.length > 10) {
+		return false;
+	}
+
+	return true;
+};
 
 const retryFn = async (fn, retry = 0) => {
 	try {
@@ -270,6 +295,7 @@ const pool = new Pool({
 	password: "123",
 	connectionTimeoutMillis: 0,
 	idleTimeoutMillis: 0,
+	max: 100,
 	database: "rinha",
 });
 
