@@ -292,26 +292,23 @@ const getClient = async () => {
 	return client;
 };
 
-const max = 30;
 const pool = new Pool({
-	host: "db",
+	host: process.env.DB_HOSTNAME,
 	port: 5432,
 	user: "admin",
 	password: "123",
 	connectionTimeoutMillis: 60_000,
 	idleTimeoutMillis: 0,
-	max,
+	max: process.env.DB_MAX_POOL_SIZE,
 	database: "rinha",
 });
 
-// Define the port the server will listen on
-const port = 3000;
+const port = process.env.PORT;
 
-// Start the server and listen on the defined port
 server.listen(port, () => {
 	console.log(`Server running at http://localhost:${port}/`);
 	Promise.all(
-		Array(max)
+		Array(process.env.DB_INITIAL_POOL_SIZE)
 			.fill()
 			.map(() => getClient())
 	).then((clients) => {
