@@ -104,6 +104,7 @@ const server = http.createServer(async (req, res) => {
 			const saldo = {
 				total: rows[0].saldo,
 				limite: rows[0].limite,
+				data_extrato: new Date().toISOString(),
 			};
 
 			const ultimas_transacoes = !rows?.[0]?.realizada_em ? [] : rows;
@@ -170,6 +171,8 @@ const retryFn = async (fn, retry = 0) => {
 			return Promise.reject(error);
 		}
 
+		console.log("Retrying", retry + 1, "of", MAX_RETRIES, "times");
+		console.log("Error", error.code);
 		const timeout = RETRY_TIMEOUT_MS * (retry + 1);
 		await sleep(timeout);
 		return retryFn(fn, retry + 1);
@@ -283,19 +286,21 @@ const getBody = (req) => {
 	});
 };
 
-const getClient = () => {
-	return pool.connect();
+const getClient = async () => {
+	const client = await pool.connect();
+
+	return client;
 };
 
+const max = 30;
 const pool = new Pool({
-	// host: "db",
-	host: "172.28.0.1",
+	host: "db",
 	port: 5432,
 	user: "admin",
 	password: "123",
-	connectionTimeoutMillis: 0,
+	connectionTimeoutMillis: 60_000,
 	idleTimeoutMillis: 0,
-	max: 100,
+	max,
 	database: "rinha",
 });
 
@@ -305,4 +310,12 @@ const port = 3000;
 // Start the server and listen on the defined port
 server.listen(port, () => {
 	console.log(`Server running at http://localhost:${port}/`);
+	Promise.all(
+		Array(max)
+			.fill()
+			.map(() => getClient())
+	).then((clients) => {
+		clients.forEach((client) => client.release());
+		console.log("Pool de conexões criado com sucesso");
+	});
 });
