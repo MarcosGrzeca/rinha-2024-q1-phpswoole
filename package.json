@@ -4,7 +4,8 @@
   "main": "index.js",
   "license": "MIT",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "start:local": "export DB_HOSTNAME=172.28.0.1 PORT=9999 && node index.js"
   },
   "dependencies": {
     "pg": "^8.11.3"

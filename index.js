@@ -186,8 +186,6 @@ const sleep = async (ms) => {
 };
 
 const insertCredito = async (client, id, body) => {
-	const cliente = await getCliente(client, id);
-
 	try {
 		const {
 			rows: [row],
@@ -201,13 +199,13 @@ const insertCredito = async (client, id, body) => {
 			return Promise.reject({ code: 400 });
 		}
 
-		const [novo_saldo, possui_erro, mensagem] = row.result
+		const [novo_saldo, limite] = row.result
 			.replace("(", "")
 			.replace(")", "")
 			.split(",");
 
 		return {
-			limite: cliente.limite,
+			limite: parseInt(limite),
 			saldo: parseInt(novo_saldo),
 		};
 	} catch (error) {
@@ -216,10 +214,6 @@ const insertCredito = async (client, id, body) => {
 };
 
 const insertDebito = async (client, id, body) => {
-	const cliente = await getCliente(client, id);
-
-	const limite = cliente.limite;
-
 	try {
 		const {
 			rows: [row],
@@ -233,17 +227,17 @@ const insertDebito = async (client, id, body) => {
 			return Promise.reject({ code: 400 });
 		}
 
-		const [novo_saldo, possui_erro, mensagem] = row.result
+		const [sucesso, novo_saldo, limite] = row.result
 			.replace("(", "")
 			.replace(")", "")
 			.split(",");
 
-		if (possui_erro === "t") {
+		if (sucesso === "0") {
 			return Promise.reject({ code: 422 });
 		}
 
 		return {
-			limite,
+			limite: parseInt(limite),
 			saldo: parseInt(novo_saldo),
 		};
 	} catch (error) {

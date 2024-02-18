@@ -20,7 +20,7 @@ services:
       resources:
         limits:
           cpus: "0.30"
-          memory: "100MB"
+          memory: "50MB"
     restart: on-failure
 
   api02:
@@ -42,7 +42,7 @@ services:
       resources:
         limits:
           cpus: "0.20"
-          memory: "50MB"
+          memory: "30MB"
 
   db:
     image: postgres:latest
@@ -63,7 +63,7 @@ services:
       resources:
         limits:
           cpus: "0.7"
-          memory: "300MB"
+          memory: "420MB"
 
 networks:
   default:
