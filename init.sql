@@ -53,7 +53,6 @@ RETURNING saldo, limite INTO _saldo, _limite;
 	GET DIAGNOSTICS success = ROW_COUNT;
 
 	IF success THEN
-		PERFORM pg_advisory_unlock(cliente_id_tx);
 		INSERT INTO transacoes (cliente_id, valor, tipo, descricao)
 		VALUES (cliente_id_tx, valor_tx, 'd', descricao_tx);
 
@@ -79,11 +78,11 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 AS $$
 BEGIN
+	PERFORM pg_advisory_xact_lock(cliente_id_tx);
 
 	INSERT INTO transacoes
 		VALUES(DEFAULT, cliente_id_tx, valor_tx, 'c', descricao_tx, NOW());
 
-	PERFORM pg_advisory_xact_lock(cliente_id_tx);
 	RETURN QUERY
 		UPDATE clientes
 		SET saldo = saldo + valor_tx
