@@ -53,7 +53,7 @@ RETURNING saldo, limite INTO _saldo, _limite;
 	GET DIAGNOSTICS success = ROW_COUNT;
 
 	IF success THEN
-		PERFORM pg_advisory_unlock(cliente_id_tx)
+		PERFORM pg_advisory_unlock(cliente_id_tx);
 		INSERT INTO transacoes (cliente_id, valor, tipo, descricao)
 		VALUES (cliente_id_tx, valor_tx, 'd', descricao_tx);
 
