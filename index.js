@@ -43,8 +43,8 @@ const server = http.createServer(async (req, res) => {
 			}
 			const response =
 				body.tipo === "c"
-					? await retryFn(() => insertCredito(client, id, body), 3)
-					: await retryFn(() => insertDebito(client, id, body), 3);
+					? await insertCredito(client, id, body)
+					: await insertDebito(client, id, body);
 
 			res.writeHead(200, { "Content-Type": "application/json" });
 
@@ -84,7 +84,6 @@ const server = http.createServer(async (req, res) => {
 		const [, id] = match;
 
 		try {
-			const cliente = await getCliente(client, id);
 			const { rows } = await client.query(
 				`SELECT c.saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
 				FROM clientes c
@@ -243,24 +242,6 @@ const insertDebito = async (client, id, body) => {
 	} catch (error) {
 		return Promise.reject(error);
 	}
-};
-
-const clientesCache = {};
-const getCliente = async (client, id) => {
-	if (clientesCache[id]) {
-		return clientesCache[id];
-	}
-
-	const { rows } = await client.query("SELECT * FROM clientes WHERE id = $1", [
-		id,
-	]);
-
-	if (!rows.length) {
-		return Promise.reject({ code: 404 });
-	}
-
-	clientesCache[id] = rows[0];
-	return clientesCache[id];
 };
 
 const getBody = (req) => {

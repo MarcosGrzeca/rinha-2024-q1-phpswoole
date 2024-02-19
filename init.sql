@@ -16,6 +16,9 @@ CREATE UNLOGGED TABLE transacoes (
 		FOREIGN KEY (cliente_id) REFERENCES clientes(id)
 );
 
+CREATE INDEX CONCURRENTLY idx_transacoes_cliente_id
+	ON transacoes (cliente_id);
+
 DO $$
 BEGIN
 	INSERT INTO clientes (nome, limite, saldo)
