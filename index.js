@@ -1,9 +1,6 @@
 const http = require("http");
 const { Pool } = require("pg");
 
-const MAX_RETRIES = 10;
-const RETRY_TIMEOUT_MS = 50;
-
 const server = http.createServer(async (req, res) => {
 	let match = null;
 
@@ -85,12 +82,12 @@ const server = http.createServer(async (req, res) => {
 
 		try {
 			const { rows } = await client.query(
-				`SELECT c.saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
+				`SELECT t.id as id_transacao, c.saldo, c.limite, t.descricao, t.valor, t.tipo, t.realizada_em
 				FROM clientes c
 				LEFT JOIN transacoes t ON t.cliente_id = c.id
 				WHERE c.id = $1
 				ORDER BY t.id DESC
-				LIMIT 10`,
+				LIMIT 11`,
 				[id]
 			);
 
@@ -100,13 +97,19 @@ const server = http.createServer(async (req, res) => {
 				return;
 			}
 
+			if (rows.length > 10) {
+				cleanUp(id, rows[10].id_transacao);
+			}
+
 			const saldo = {
 				total: rows[0].saldo,
 				limite: rows[0].limite,
 				data_extrato: new Date().toISOString(),
 			};
 
-			const ultimas_transacoes = !rows?.[0]?.realizada_em ? [] : rows;
+			const ultimas_transacoes = !rows?.[0]?.realizada_em
+				? []
+				: rows.slice(0, 10);
 
 			const response = {
 				saldo,
@@ -158,32 +161,6 @@ const validarTransacao = (body) => {
 	return true;
 };
 
-const retryFn = async (fn, retry = 0) => {
-	try {
-		return fn();
-	} catch (error) {
-		if ([404, 422].includes(error.code)) {
-			return Promise.reject(error);
-		}
-
-		if (retry > MAX_RETRIES) {
-			return Promise.reject(error);
-		}
-
-		console.log("Retrying", retry + 1, "of", MAX_RETRIES, "times");
-		console.log("Error", error.code);
-		const timeout = RETRY_TIMEOUT_MS * (retry + 1);
-		await sleep(timeout);
-		return retryFn(fn, retry + 1);
-	}
-};
-
-const sleep = async (ms) => {
-	return new Promise((resolve) => {
-		setTimeout(resolve, ms);
-	});
-};
-
 const insertCredito = async (client, id, body) => {
 	try {
 		const {
@@ -210,6 +187,25 @@ const insertCredito = async (client, id, body) => {
 	} catch (error) {
 		return Promise.reject(error);
 	}
+};
+
+const mapCleanUp = {};
+const cleanUp = (client_id, id_transacao) => {
+	if (!id_transacao) {
+		return;
+	}
+
+	if (mapCleanUp[client_id]) {
+		clearTimeout(mapCleanUp[client_id]);
+	}
+
+	mapCleanUp[client_id] = setTimeout(() => {
+		delete mapCleanUp[client_id];
+		pool.query(`DELETE FROM transacoes WHERE id <= $1 AND cliente_id = $2`, [
+			id_transacao,
+			client_id,
+		]);
+	}, 1000);
 };
 
 const insertDebito = async (client, id, body) => {
