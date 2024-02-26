@@ -1,13 +1,14 @@
-FROM node:lts-alpine3.19
+FROM php:8.0-cli
 
 WORKDIR /usr/src/app
 
 COPY . .
 
-COPY ./package*.json ./
+#EXPOSE 9501
 
-RUN npm install
+RUN composer install
 
 COPY . /usr/src/app
 
-CMD ["npm", "start"]
+CMD ["php", "index.php"]
+
