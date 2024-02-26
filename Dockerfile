@@ -1,14 +1,19 @@
+FROM composer:latest AS composer
+
 FROM php:8.0-cli
+#from openswoole/swoole
+COPY --from=composer /usr/bin/composer /usr/bin/composer
+
+RUN apk add --no-cache \
+    postgresql-dev $PHPIZE_DEPS \
+    && docker-php-ext-install pdo_pgsql \
+    && pecl install swoole
+
+RUN docker-php-ext-enable swoole
 
 WORKDIR /usr/src/app
 
-COPY . .
+COPY . /app
+WORKDIR /app
 
-#EXPOSE 9501
-
-RUN composer install
-
-COPY . /usr/src/app
-
-CMD ["php", "index.php"]
-
+CMD ["php", "./index.php"]

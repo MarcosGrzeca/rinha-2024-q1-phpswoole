@@ -4,7 +4,7 @@ use Swoole\Http\Request;
 use Swoole\Http\Response;
 
 // Create an HTTP server
-$http = new Swoole\Http\Server("0.0.0.0", 9501);
+$http = new Swoole\Http\Server("0.0.0.0", 8000);
 
 // Configure PostgreSQL connection
 $pgConfig = [
@@ -182,3 +182,4 @@ function cleanUp($client_id, $id_transacao)
             $client->queryParams("DELETE FROM transacoes WHERE id <= $1 AND cliente_id = $2", [$id_transacao, $client_id]);
         });
     });
+}
